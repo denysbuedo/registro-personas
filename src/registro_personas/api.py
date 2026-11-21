@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -11,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException
 
-from .db import get_session
+from .db import database_is_ready, get_session
 from .errors import DomainError
 from .schemas import (
     AccountLink,
@@ -143,10 +142,15 @@ main{max-width:800px;margin:8vh auto;padding:24px}.card{background:white;border:
             key_configured = True
         except (DomainError, OSError):
             key_configured = False
-        if not key_configured or not os.environ.get("REGISTRY_DATABASE_URL"):
+        if not key_configured:
             return JSONResponse(
                 status_code=503,
-                content={"status": "not_ready", "reason": "required_local_configuration_missing"},
+                content={"status": "not_ready", "reason": "authentication_not_configured"},
+            )
+        if not database_is_ready():
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "reason": "database_unavailable"},
             )
         return {"status": "ready", "private_api": "platform_signed_delegation"}
 

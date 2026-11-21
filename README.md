@@ -29,7 +29,7 @@ El vínculo entre una cuenta digital y una persona requiere comprobar la titular
 El servicio está instalado para validación privada, pero todavía no debe recibir datos reales. Las operaciones privadas permanecen cerradas hasta que se configure PostgreSQL y se complete la validación autenticada de extremo a extremo con la plataforma.
 
 - GET /health/live confirma que el proceso responde; no comprueba la base de datos.
-- GET /health/ready devuelve 503 si falta la configuración de delegación o la URL de base de datos. Que devuelva 200 confirma la presencia de esa configuración, no sustituye una prueba de conexión y migraciones.
+- GET /health/ready devuelve 503 si falta la configuración de delegación o si PostgreSQL no responde a una consulta mínima. Un 200 confirma que el proceso puede conectarse a PostgreSQL; no sustituye la revisión de migraciones ni la prueba autenticada.
 - Las rutas /v1 requieren un token delegado válido; sin autenticación responden 401. Sin configuración confiable, el servicio permanece no disponible.
 - El servicio debe permanecer en loopback o en una red privada accesible solo por el consumidor autorizado. No publicar directamente sus operaciones privadas.
 
@@ -65,7 +65,7 @@ py -3.12 -m venv .venv
 
 Usar una base local desechable, exclusivamente con datos ficticios. No usar una base de producción o de otra aplicación.
 
-Ejemplo con PostgreSQL local ya instalado:
+Ejemplo con PostgreSQL local ya instalado y autenticación local apropiada:
 
 ~~~bash
 createdb registro_personas_dev
@@ -73,6 +73,14 @@ export REGISTRY_DATABASE_URL='postgresql+psycopg://usuario_local:clave_local@127
 alembic upgrade head
 alembic check
 ~~~
+
+Si PostgreSQL local usa sockets Unix, psycopg puede conectarse con una URL como
+~~~text
+postgresql+psycopg:///registro_personas_dev
+~~~
+La autenticación local de PostgreSQL debe permitir al usuario del servicio acceder
+a la base. En servidores, definir el método de autenticación y los permisos con
+el equipo DBA; no habilitar TCP solo para evitar configurar el socket.
 
 Guarda las credenciales locales fuera del repositorio. El archivo .env está excluido por .gitignore; no subas claves privadas, contraseñas ni archivos de entorno.
 

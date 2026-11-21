@@ -229,7 +229,29 @@ def test_platform_port_and_readiness_stay_closed(monkeypatch):
         assert client.get("/health/live").status_code == 200
         response = client.get("/health/ready")
         assert response.status_code == 503
-        assert response.json()["reason"] == "required_local_configuration_missing"
+        assert response.json()["reason"] == "authentication_not_configured"
+
+
+@pytest.mark.parametrize("database_ready", [True, False])
+def test_readiness_checks_database_connection(monkeypatch, database_ready):
+    import registro_personas.api as api_module
+
+    monkeypatch.setenv("REGISTRY_DATABASE_URL", "postgresql+psycopg://local@127.0.0.1/test")
+    monkeypatch.setattr(
+        api_module, "_verifier", lambda: ("issuer", "audience", None, None, None, None)
+    )
+    monkeypatch.setattr(api_module, "database_is_ready", lambda: database_ready)
+    with TestClient(create_app()) as client:
+        response = client.get("/health/ready")
+    if database_ready:
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+    else:
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "not_ready",
+            "reason": "database_unavailable",
+        }
 
 
 @pytest.mark.parametrize("port", ["0", "65536", "https://invalid.example.invalid"])
