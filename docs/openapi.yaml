@@ -1,0 +1,514 @@
+openapi: 3.1.0
+info:
+  title: Registro Institucional de Personas — MVP privado
+  version: 0.1.0
+  description: |
+    Contrato provisional del servicio independiente. La plataforma autentica al
+    operador mediante OIDC interactivo y presenta a Registro un Bearer delegado
+    RS256 de corta duración, firmado por la plataforma. Registro valida firma,
+    issuer de plataforma, audiencia registro-personas, vigencia y claims de
+    delegación; no recibe ni confía en el Bearer OIDC del navegador ni en cabeceras
+    de actor. Sin configuración confiable responde 503. No hay client_credentials,
+    cuentas técnicas nuevas ni autenticación por contraseñas propias.
+    Las rutas v1 conservan el JSON interno system/entity/external_id; la plataforma
+    adapta los nombres públicos source_system/source_entity_type/source_record_id.
+servers:
+  - url: http://127.0.0.1:8013
+    description: Instancia local; operaciones privadas exigen token delegado de plataforma validado
+security:
+  - HTTPBearer: []
+x-access-control:
+  default: deny unless a trusted platform delegation is configured and verified
+  authentication: RS256 delegated Bearer with trusted platform issuer, audiencia registro-personas, strict signature and lifetime validation
+  identity: sub original opaco y actor_iss original; no username, nombre, correo ni perfiles en JWT
+  delegation: permissions y sources limitan la capacidad; no se aceptan roles realm/client del navegador como permisos del Registro
+  authorization: Backend por operación, sistema de origen y recurso person_id
+  disclosure: Sin acceso al recurso, la consulta responde 404 genérico sin confirmar existencia
+  ownership: Account linking remains denied pending a separate trusted ownership verifier
+  audit: Read, create, conflict and review-list operations write restricted audit records
+  logs: No include names, issuer/subject, references, bodies, tokens or secrets
+x-delegated-token:
+  algorithm: RS256
+  required-header-fields: [alg, kid]
+  header: {kid: Identificador de clave confiable de la plataforma}
+  required-claims: [iss, aud, sub, actor_iss, token_use, permissions, sources, jti, iat, nbf, exp]
+  issuer: Emisor de delegación de la plataforma configurado y verificado exactamente
+  audience: registro-personas
+  token_use: persons_delegation_v1
+  subject: Subject original opaco del operador; actor_iss conserva su emisor OIDC original
+  actor-identity: La auditoría e idempotencia conservan la pareja original actor_iss/sub, no el emisor delegado como una persona nueva
+  permissions: Permisos internos acotados por operación; no son roles ni privilegios de aplicación nuevos
+  sources: Aliases exactos autorizados, incluidos namespaces con puntos
+  jti: UUID por token
+  lifetime: {default-seconds: 60, maximum-seconds: 120}
+  validation: exp/nbf/iat se validan; exp no puede exceder iat en más de 120 segundos
+  privacy: Sin username, nombres, correo, perfiles, DN ni secretos
+paths:
+  /v1/personas:
+    post:
+      operationId: create_person
+      summary: Crear persona controladamente sin búsqueda ni fusión heurística
+      description: |
+        Requiere permiso delegado persons.create y source.system en sources. person_id es
+        generado por servidor. source.system debe coincidir con provenance.system
+        y estar autorizado al actor. Idempotency-Key se aísla por actor: repetir
+        clave y petición devuelve el mismo resultado y 201; cambiar el contenido
+        devuelve 409. Una referencia existente produce 409, sin divulgar su persona.
+      x-required-permissions: [persons.create]
+      x-source-constraint: source.system debe pertenecer al claim firmado sources
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonCreate'}
+      responses:
+        '201':
+          description: Persona creada o repetición idempotente de la creación
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    get:
+      operationId: list_persons
+      summary: Listar únicamente personas autorizadas con paginación
+      description: |
+        Requiere persons.read; filtra por fuentes autorizadas antes de contar y
+        paginar. Sin fuentes autorizadas devuelve una página vacía.
+        Orden estable por person_id. No permite búsquedas por nombre o correo.
+      x-required-permissions: [persons.read, persons.list]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 10000, default: 0}
+      responses:
+        '200':
+          description: Página de personas autorizadas
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonPage'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/personas/{person_id}:
+    get:
+      operationId: get_person
+      summary: Consultar persona por su identificador institucional
+      x-required-permission: persons.read
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Vista mínima autorizada; no incluye referencias ni vínculos de cuentas
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/personas/{person_id}/referencias:
+    post:
+      operationId: link_person_source_reference
+      summary: Vincular una referencia de origen a una persona seleccionada explícitamente
+      description: |
+        Requiere permisos delegados persons.read y persons.review y
+        source.system en sources, además de acceso al person_id de destino.
+        La interfaz debe exigir selección explícita de una persona autorizada;
+        no se infiere por nombre, correo o similitud. source.system debe coincidir
+        con provenance.system. evidence_ref es UUID opaco y observed_at requiere
+        zona horaria; no se acepta evidencia personal ni secretos en el cuerpo.
+        Crea solo la referencia: no modifica person_id, no fusiona personas ni
+        crea cuentas. Devuelve 201 al crear; 200 si la misma referencia exacta ya
+        pertenece al mismo destino. Si pertenece a otra persona responde 409
+        genérico y registra un caso pendiente, sin revelar el ID existente ni
+        reasignar el vínculo. Creación, repetición y conflicto quedan auditados.
+      x-required-permissions: [persons.read, persons.review, persons.references.link]
+      x-source-constraint: source.system debe pertenecer al claim firmado sources
+      x-resource-authorization: El operador debe poder consultar el person_id seleccionado
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SourceReferenceLink'}
+      responses:
+        '201':
+          description: Referencia creada para la persona seleccionada y operación auditada
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SourceReferenceView'}
+        '200':
+          description: Referencia exacta ya asociada al mismo destino; repetición auditada sin duplicado
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SourceReferenceView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    get:
+      operationId: list_person_source_references
+      summary: Listar referencias de origen autorizadas para una persona
+      x-required-permissions: [persons.read]
+      x-source-constraint: Solo devuelve referencias cuyo system pertenece al claim firmado sources
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Referencias filtradas por el claim firmado sources del token delegado
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/SourceReferenceView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/referencias/resolver:
+    get:
+      operationId: resolve_source_reference
+      summary: Resolver referencia exacta de origen, sin crear ni asociar cuentas
+      description: |
+        Requiere autorización para el sistema de origen y para la persona
+        resultante. Sin vínculo suficiente devuelve 404 genérico. Nunca crea una
+        persona ni resuelve por nombre, correo o coincidencia parcial.
+      x-required-permissions: [persons.read]
+      x-source-constraint: El system de la consulta debe pertenecer al claim firmado sources
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: system
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/SourceSystem'}
+        - name: entity
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/SourceSystem'}
+        - name: external_id
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 200}
+      responses:
+        '200':
+          description: Persona vinculada y autorizada
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/revisiones:
+    get:
+      operationId: list_source_reference_reviews
+      summary: Listar colisiones de referencias pendientes sin resolverlas
+      x-required-permissions: [persons.review]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 10000, default: 0}
+      responses:
+        '200':
+          description: Metadatos opacos de colisiones source_reference_collision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewCasePage'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/personas/{person_id}/cuentas:
+    post:
+      operationId: link_digital_account
+      summary: Vincular cuenta digital con verificación privilegiada de titularidad
+      description: |
+        No crea cuentas en Keycloak ni LDAP. Requiere permiso sobre la persona y
+        sistema de procedencia, y una verificación confiable que compruebe actor,
+        persona, issuer, subject y verification_ref. El identificador de persona
+        recibido no es prueba de identidad. La pareja issuer/subject es única y
+        opaca: no se normaliza ni se reasigna. Si existe para otra persona devuelve
+        409 sin revelar el destino; el conflicto permanece para revisión humana.
+        Repetir el mismo vínculo ACTIVE verificado para la misma persona devuelve
+        200 sin duplicar vínculo. Un vínculo inactivo o en revisión produce 409.
+      x-required-permission: accounts.link
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccountLink'}
+      responses:
+        '201':
+          description: Vínculo creado y auditado
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountView'}
+        '200':
+          description: Vínculo ACTIVE ya existente para la misma persona, titularidad nuevamente verificada
+          headers:
+            X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountView'}
+        '401': {$ref: '#/components/responses/Unauthenticated'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Invalid'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer delegado RS256 emitido por la plataforma; no acepta directamente el token OIDC del navegador
+  parameters:
+    PersonId:
+      name: person_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      description: UUID opaco sin PII; si falta o es inválido el servidor genera uno nuevo
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, format: uuid}
+  headers:
+    CorrelationId:
+      description: UUID de correlación generado o validado por el servidor
+      schema: {type: string, format: uuid}
+  responses:
+    Unauthenticated:
+      description: Identidad no autenticada por un adaptador institucional aprobado
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Forbidden:
+      description: Operación o sistema fuera del alcance autorizado; detalle genérico
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    NotFound:
+      description: Recurso inexistente o no divulgable; sin distinguir las dos situaciones
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Conflict:
+      description: Conflicto de referencia, idempotencia o vínculo; revisión necesaria sin reasignación
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Invalid:
+      description: Entrada inválida; no reproduce cuerpos ni valores sensibles en el error
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unavailable:
+      description: Operación cerrada por falta de adaptador aprobado o dependencia no disponible
+      headers:
+        X-Correlation-ID: {$ref: '#/components/headers/CorrelationId'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    SourceSystem:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$'
+      description: Alias de sistema autorizado, admite namespaces con puntos; el actor debe tener permiso para el alias exacto
+      examples: [reduniv.conecta, reduniv.aprende, reduniv.convoca]
+    SourceInput:
+      type: object
+      additionalProperties: false
+      required: [system, entity, external_id]
+      properties:
+        system: {$ref: '#/components/schemas/SourceSystem'}
+        entity: {$ref: '#/components/schemas/SourceSystem'}
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Referencia exacta sin espacios exteriores ni caracteres de control
+    Provenance:
+      type: object
+      additionalProperties: false
+      required: [system, evidence_ref, observed_at]
+      properties:
+        system: {$ref: '#/components/schemas/SourceSystem'}
+        evidence_ref:
+          type: string
+          format: uuid
+          description: UUID opaco de evidencia restringida; no evidencia personal ni secretos
+        observed_at:
+          type: string
+          format: date-time
+          description: Fecha con zona horaria obligatoria
+    PersonCreate:
+      type: object
+      additionalProperties: false
+      required: [display_name, source, provenance]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Nombre no vacío ni caracteres de control; se eliminan espacios exteriores
+        source: {$ref: '#/components/schemas/SourceInput'}
+        provenance: {$ref: '#/components/schemas/Provenance'}
+    PersonView:
+      type: object
+      additionalProperties: false
+      required: [person_id, status, display_name, created_at, updated_at]
+      properties:
+        person_id: {type: string, format: uuid, readOnly: true}
+        status: {type: string, enum: [ACTIVE, INACTIVE, UNDER_REVIEW]}
+        display_name: {type: string, minLength: 1, maxLength: 200}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PersonPage:
+      type: object
+      additionalProperties: false
+      required: [items, limit, offset, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/PersonView'}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        offset: {type: integer, minimum: 0, maximum: 10000}
+        total: {type: integer, minimum: 0}
+    SourceReferenceView:
+      type: object
+      additionalProperties: false
+      required: [system, entity, external_id]
+      properties:
+        system: {$ref: '#/components/schemas/SourceSystem'}
+        entity: {$ref: '#/components/schemas/SourceSystem'}
+        external_id: {type: string, minLength: 1, maxLength: 200}
+    SourceReferenceLink:
+      type: object
+      additionalProperties: false
+      required: [source, provenance]
+      properties:
+        source: {$ref: '#/components/schemas/SourceInput'}
+        provenance: {$ref: '#/components/schemas/Provenance'}
+    ReviewCaseView:
+      type: object
+      additionalProperties: false
+      required: [case_id, kind, requested_person_id, created_at]
+      properties:
+        case_id: {type: string, format: uuid}
+        kind: {type: string, enum: [source_reference_collision]}
+        requested_person_id: {type: [string, 'null'], format: uuid}
+        created_at: {type: string, format: date-time}
+    ReviewCasePage:
+      type: object
+      additionalProperties: false
+      required: [items, limit, offset, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ReviewCaseView'}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        offset: {type: integer, minimum: 0, maximum: 10000}
+        total: {type: integer, minimum: 0}
+    AccountLink:
+      type: object
+      additionalProperties: false
+      required: [issuer, subject, verification_ref, provenance]
+      properties:
+        issuer:
+          type: string
+          format: uri
+          maxLength: 500
+          description: HTTPS estricto, sin query, fragmento ni credenciales; comparación exacta sin normalizar
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Identificador opaco exacto, sensible a mayúsculas; nunca correo o DN por inferencia
+        verification_ref:
+          type: string
+          format: uuid
+          description: UUID opaco que debe comprobar el puerto confiable de titularidad
+        provenance: {$ref: '#/components/schemas/Provenance'}
+    AccountView:
+      type: object
+      additionalProperties: false
+      required: [account_id, person_id, issuer, subject, state, linked_at]
+      properties:
+        account_id: {type: string, format: uuid}
+        person_id: {type: string, format: uuid}
+        issuer: {type: string, format: uri}
+        subject: {type: string}
+        state: {type: string}
+        linked_at: {type: string, format: date-time}
+    Problem:
+      type: object
+      description: RFC 9457; mensajes sanitizados y sin valores de entradas ni detalles de SQL
+      additionalProperties: false
+      required: [type, title, status, correlation_id]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        correlation_id: {type: string, format: uuid}

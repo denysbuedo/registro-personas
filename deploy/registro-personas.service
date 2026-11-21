@@ -1,0 +1,22 @@
+# Example only: requires review of identities, DB privileges and approved authentication.
+[Unit]
+Description=Registro Institucional de Personas (PER-001)
+After=network.target
+
+[Service]
+Type=simple
+User=registro-personas
+Group=registro-personas
+WorkingDirectory=/opt/registro-personas
+EnvironmentFile=/etc/registro-personas/environment
+ExecStart=/opt/registro-personas/.venv/bin/python -m registro_personas
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
