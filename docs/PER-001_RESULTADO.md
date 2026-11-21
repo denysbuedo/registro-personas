@@ -1,6 +1,6 @@
 # PER-001 · Resultado para el orquestador
 
-Fecha: 2026-11-19. Código en `D:\TRABAJO\Desarrollo\registro-personas`, repositorio
+Fecha: 2026-11-19. Código en `[ruta local del proyecto]`, repositorio
 Git local independiente, rama `main`, sin remoto ni publicación. Stack aprobado en
 la sesión: Python 3.12/FastAPI/PostgreSQL/SQLAlchemy 2/Alembic/Pydantic 2/psycopg 3.
 
