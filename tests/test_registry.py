@@ -18,7 +18,7 @@ from registro_personas.models import (
     ReviewCase,
     SourceReference,
 )
-from registro_personas.schemas import AccountLink, SourceReferenceLink
+from registro_personas.schemas import AccountLink, SourceInput, SourceReferenceLink
 from registro_personas.security import DenyOwnership
 
 from .conftest import invoke
@@ -49,6 +49,17 @@ def link_input():
             },
         }
     )
+
+
+def test_dotted_institutional_source_alias_is_accepted():
+    source = SourceInput.model_validate(
+        {
+            "system": "reduniv.conecta",
+            "entity": "persona",
+            "external_id": "PER002-TEST-NO-EXISTE-20261122",
+        }
+    )
+    assert source.system == "reduniv.conecta"
 
 
 def test_create_idempotency_and_source_conflict(db_engine, principal, person_data):

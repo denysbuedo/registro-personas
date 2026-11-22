@@ -14,7 +14,13 @@ from pydantic import (
     model_validator,
 )
 
-Alias = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$", max_length=64)]
+Alias = Annotated[
+    str,
+    StringConstraints(
+        pattern=r"^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$",
+        max_length=64,
+    ),
+]
 
 
 class StrictModel(BaseModel):
