@@ -5,6 +5,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -35,6 +36,7 @@ from registro_personas.models import AuditRecord  # noqa: E402
 from registro_personas.security import _verifier  # noqa: E402
 
 ISSUER = "https://identity.example.invalid/realms/per002-test"
+GLOBAL_ISSUER = "https://identity.example.invalid/realms/interoperability"
 AUDIENCE = "mes-api"
 DELEGATION_ISSUER = "https://platform.example.invalid/persons-delegation"
 DELEGATION_AUDIENCE = "registro-personas"
@@ -48,15 +50,22 @@ ROLE_SET = [
 
 
 def _signed_token(
-    private_key, *, roles=ROLE_SET, audience=AUDIENCE, subject="synthetic-per002-operator"
+    private_key,
+    *,
+    roles=ROLE_SET,
+    audience=AUDIENCE,
+    subject="synthetic-per002-operator",
+    authorized_party="interoperabilidad-admin",
 ) -> str:
     now = datetime.now(UTC)
     return jwt.encode(
         {
             "iss": ISSUER,
             "aud": audience,
+            "azp": authorized_party,
             "sub": subject,
             "iat": int(now.timestamp()),
+            "nbf": int(now.timestamp()),
             "exp": int((now + timedelta(minutes=5)).timestamp()),
             "realm_access": {"roles": roles},
         },
@@ -124,16 +133,22 @@ def test_operator_register_query_conflict_and_audit(
     )
     monkeypatch.setenv("PERSONS_AUTHORIZATION_POLICY_FILE", str(policy_path))
     operator._settings.persons_oidc_issuer_url = ISSUER
-    operator._settings.persons_oidc_client_id = "interoperabilidad-admin-lab"
+    operator._settings.persons_oidc_client_id = "interoperabilidad-admin"
     operator._settings.persons_oidc_redirect_uri = "http://127.0.0.1:8003/admin/personas"
-    operator._settings.oidc_issuer_url = ISSUER
+    operator._settings.oidc_issuer_url = GLOBAL_ISSUER
     from mes_person_service.delegation import _clear_signing_config
 
     _clear_signing_config()
     _verifier.cache_clear()
-    monkeypatch.setattr(platform_security, "_issuer", ISSUER)
+    monkeypatch.setattr(platform_security, "_issuer", GLOBAL_ISSUER)
     monkeypatch.setattr(platform_security, "_pinned_public_key", operator_key.public_key())
-    monkeypatch.setattr(platform_security, "_issuer", ISSUER)
+    monkeypatch.setattr(
+        platform_security,
+        "_jwks_client_for_issuer",
+        lambda issuer: SimpleNamespace(
+            get_signing_key_from_jwt=lambda token: SimpleNamespace(key=operator_key.public_key())
+        ),
+    )
     monkeypatch.setattr(platform_security._settings, "oidc_audience", AUDIENCE)
     monkeypatch.setenv("REGISTRY_PERSONS_URL", "http://127.0.0.1:8013")
 
@@ -184,6 +199,16 @@ def test_operator_register_query_conflict_and_audit(
                 json=payload,
             )
             assert denied.status_code == 403
+
+            wrong_client = _signed_token(
+                operator_key,
+                authorized_party="unapproved-client",
+            )
+            wrong_client_response = client.get(
+                "/api/v1/personas",
+                headers={"Authorization": f"Bearer {wrong_client}"},
+            )
+            assert wrong_client_response.status_code == 401
 
             created = client.post("/api/v1/personas", headers=headers, json=payload)
             assert created.status_code == 201
